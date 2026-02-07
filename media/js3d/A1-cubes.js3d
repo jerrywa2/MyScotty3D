@@ -54,6 +54,11 @@
 	"shapes":{},
 	"particles":{},
 	"textures":{
+		"Texture":{
+			"type":"Constant",
+			"color":[1,0,0],
+			"scale":1
+		},
 		"white":{
 			"type":"Image",
 			"sampler":"nearest",
@@ -61,6 +66,10 @@
 		}
 	},
 	"materials":{
+		"Material":{
+			"type":"Lambertian",
+			"albedo":"Texture"
+		},
 		"lam_white":{
 			"type":"Lambertian",
 			"albedo":"white"
@@ -79,17 +88,17 @@
 			"Bunny_instance":{
 				"transform":"Bunny_transform",
 				"mesh":"Bunny_mesh",
-				"material":"lam_white",
+				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Wireframe",
+				"draw style":"Flat",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			},
 			"Mesh Instance":{
 				"transform":"Transform",
 				"mesh":"Bunny_mesh",
-				"material":"lam_white",
+				"material":"Material",
 				"visible":true,
 				"collides":true,
 				"draw style":"Flat",
@@ -99,20 +108,20 @@
 			"Mesh Instance 1":{
 				"transform":"Transform 1",
 				"mesh":"Bunny_mesh",
-				"material":"lam_white",
+				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Smooth",
+				"draw style":"Flat",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			},
 			"Mesh Instance 2":{
 				"transform":"Transform 2",
 				"mesh":"Bunny_mesh",
-				"material":"lam_white",
+				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Correct",
+				"draw style":"Flat",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			}

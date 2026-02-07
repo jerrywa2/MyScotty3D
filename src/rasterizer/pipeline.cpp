@@ -142,6 +142,9 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 			// "Less" means the depth test passes when the new fragment has depth less than the stored depth.
 			// A1T4: Depth_Less
 			// TODO: implement depth test! We want to only emit fragments that have a depth less than the stored depth, hence "Depth_Less".
+			if (f.fb_position.z >= fb_depth) {
+				continue;
+			}
 		} else {
 			static_assert((flags & PipelineMask_Depth) <= Pipeline_Depth_Always, "Unknown depth test flag.");
 		}
@@ -164,12 +167,14 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Add) {
 				// A1T4: Blend_Add
 				// TODO: framebuffer color should have fragment color multiplied by fragment opacity added to it.
-				fb_color = sf.color; //<-- replace this line
+				//fb_color = sf.color;
+				fb_color += sf.color * sf.opacity;
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Over) {
 				// A1T4: Blend_Over
 				// TODO: set framebuffer color to the result of "over" blending (also called "alpha blending") the fragment color over the framebuffer color, using the fragment's opacity
 				// 		 You may assume that the framebuffer color has its alpha premultiplied already, and you just want to compute the resulting composite color
-				fb_color = sf.color; //<-- replace this line
+				//fb_color = sf.color;
+				fb_color = sf.color * sf.opacity + (1.0f - sf.opacity) * fb_color;
 			} else {
 				static_assert((flags & PipelineMask_Blend) <= Pipeline_Blend_Over, "Unknown blending flag.");
 			}
@@ -348,6 +353,7 @@ void Pipeline<p, P, flags>::clip_triangle(
  *
  * If you wish to work in fixed point, check framebuffer.h for useful information about the framebuffer's dimensions.
  */
+
 template<PrimitiveType p, class P, uint32_t flags>
 void Pipeline<p, P, flags>::rasterize_line(
 	ClippedVertex const& va, ClippedVertex const& vb,
@@ -361,14 +367,89 @@ void Pipeline<p, P, flags>::rasterize_line(
 	// this function!
 	// The OpenGL specification section 3.5 may also come in handy.
 
-	{ // As a placeholder, draw a point in the middle of the line:
-		//(remove this code once you have a real implementation)
-		Fragment mid;
-		mid.fb_position = (va.fb_position + vb.fb_position) / 2.0f;
-		mid.attributes = va.attributes;
-		mid.derivatives.fill(Vec2(0.0f, 0.0f));
-		emit_fragment(mid);
+	Vec2 p0(va.fb_position.x, va.fb_position.y);
+	Vec2 p1(vb.fb_position.x, vb.fb_position.y);
+
+	// Helper: line segment intersection
+	auto segment_intersects = [](Vec2 p0, Vec2 p1, Vec2 s0, Vec2 s1) -> bool {
+		Vec2 r = p1 - p0;
+		Vec2 s = s1 - s0;
+		Vec2 q = s0 - p0;
+
+		float r_cross_s = r.x * s.y - r.y * s.x;
+
+		if (std::abs(r_cross_s) < 1e-8f) return false;
+
+		float t = (q.x * s.y - q.y * s.x) / r_cross_s;
+		float u = (q.x * r.y - q.y * r.x) / r_cross_s;
+
+		return (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f);
+		};
+
+	// Helper: check if line exits diamond
+	auto exits_diamond = [&](int32_t x, int32_t y) -> bool {
+		Vec2 top(x + 0.5f, y + 1.0f);
+		Vec2 right(x + 1.0f, y + 0.5f);
+		Vec2 bottom(x + 0.5f, y + 0.0f);
+		Vec2 left(x + 0.0f, y + 0.5f);
+
+		int crossings = 0;
+		if (segment_intersects(p0, p1, left, top)) crossings++;
+		if (segment_intersects(p0, p1, top, right)) crossings++;
+		if (segment_intersects(p0, p1, right, bottom)) crossings++;
+		if (segment_intersects(p0, p1, bottom, left)) crossings++;
+
+		return crossings >= 2;
+		};
+
+	// Helper: emit a pixel
+	auto emit_pixel = [&](int32_t x, int32_t y) {
+		// Compute interpolation parameter
+		Vec2 pixel_center(x + 0.5f, y + 0.5f);
+		Vec2 d = p1 - p0;
+		float len_sq = dot(d, d);
+
+		float t = 0.5f;
+		if (len_sq > 1e-8f) {
+			t = dot(pixel_center - p0, d) / len_sq;
+			t = std::clamp(t, 0.0f, 1.0f);
+		}
+
+		Fragment frag;
+		frag.fb_position.x = x + 0.5f;
+		frag.fb_position.y = y + 0.5f;
+		frag.fb_position.z = va.fb_position.z + t * (vb.fb_position.z - va.fb_position.z);
+		frag.attributes = va.attributes;
+		frag.derivatives.fill(Vec2(0.0f, 0.0f));
+
+		emit_fragment(frag);
+		};
+
+	// Get bounding box
+	int32_t min_x = int32_t(std::floor(std::min(p0.x, p1.x)));
+	int32_t max_x = int32_t(std::floor(std::max(p0.x, p1.x)));
+	int32_t min_y = int32_t(std::floor(std::min(p0.y, p1.y)));
+	int32_t max_y = int32_t(std::floor(std::max(p0.y, p1.y)));
+
+	// Check all pixels in bounding box
+	for (int32_t y = min_y; y <= max_y; ++y) {
+		for (int32_t x = min_x; x <= max_x; ++x) {
+			if (exits_diamond(x, y)) {
+				emit_pixel(x, y);
+			}
+		}
 	}
+
+	//{ // As a placeholder, draw a point in the middle of the line:
+	//	//(remove this code once you have a real implementation)
+	//	Fragment mid;
+	//	mid.fb_position = (va.fb_position + vb.fb_position) / 2.0f;
+	//	mid.attributes = va.attributes;
+	//	mid.derivatives.fill(Vec2(0.0f, 0.0f));
+	//	emit_fragment(mid);
+	//}+
+
+
 
 }
 
@@ -421,11 +502,98 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		// A1T3: flat triangles
 		// TODO: rasterize triangle (see block comment above this function).
 
+		// Extract 2D positions
+		Vec2 a(va.fb_position.x, va.fb_position.y);
+		Vec2 b(vb.fb_position.x, vb.fb_position.y);
+		Vec2 c(vc.fb_position.x, vc.fb_position.y);
+
+		// Edge function helper method
+		auto edge = [](Vec2 v0, Vec2 v1, Vec2 p) -> float {
+			return (v1.x - v0.x) * (p.y - v0.y) - (v1.y - v0.y) * (p.x - v0.x);
+			};
+
+		// Compute signed area x2
+		float area = edge(a, b, c);
+
+		// Degenerate triangles
+		if (std::abs(area) < 1e-6f) return;
+
+		bool is_ccw = (area > 0.0f);
+		float area_inv = 1.0f / area;
+
+		// Bounding box
+		int32_t min_x = std::floor(std::min({ a.x, b.x, c.x }));
+		int32_t max_x = std::floor(std::max({ a.x, b.x, c.x }));
+		int32_t min_y = std::floor(std::min({ a.y, b.y, c.y }));
+		int32_t max_y = std::floor(std::max({ a.y, b.y, c.y }));
+
+		// Top-left rule helper method
+		auto is_top_left = [&](Vec2 v0, Vec2 v1) -> bool {
+			float dx = v1.x - v0.x;
+			float dy = v1.y - v0.y;
+
+			if (is_ccw) {
+				return (dy == 0.0f && dx < 0.0f) || (dy < 0.0f);
+			}
+			else {
+				return (dy == 0.0f && dx > 0.0f) || (dy > 0.0f);
+			}
+			};
+
+		bool bc_topleft = is_top_left(b, c);
+		bool ca_topleft = is_top_left(c, a);
+		bool ab_topleft = is_top_left(a, b);
+
+		// Rasterize
+		for (int32_t y = min_y; y <= max_y; ++y) {
+			for (int32_t x = min_x; x <= max_x; ++x) {
+
+				Vec2 p(x + 0.5f, y + 0.5f);
+
+				// Compute edge functions
+				float w0 = edge(b, c, p);
+				float w1 = edge(c, a, p);
+				float w2 = edge(a, b, p);
+
+				// Apply top-left rule
+				bool inside0 = w0 > 0.0f || (w0 == 0.0f && bc_topleft);
+				bool inside1 = w1 > 0.0f || (w1 == 0.0f && ca_topleft);
+				bool inside2 = w2 > 0.0f || (w2 == 0.0f && ab_topleft);
+
+				if (is_ccw) {
+					if (!(inside0 && inside1 && inside2)) continue;
+				}
+				else {
+					inside0 = w0 < 0.0f || (w0 == 0.0f && bc_topleft);
+					inside1 = w1 < 0.0f || (w1 == 0.0f && ca_topleft);
+					inside2 = w2 < 0.0f || (w2 == 0.0f && ab_topleft);
+					if (!(inside0 && inside1 && inside2)) continue;
+				}
+
+				// Barycentric coordinates
+				float lambda_a = w0 * area_inv;
+				float lambda_b = w1 * area_inv;
+				float lambda_c = w2 * area_inv;
+
+				// Create fragment
+				Fragment frag;
+				frag.fb_position.x = x + 0.5f;
+				frag.fb_position.y = y + 0.5f;
+				frag.fb_position.z = lambda_a * va.fb_position.z +
+					lambda_b * vb.fb_position.z +
+					lambda_c * vc.fb_position.z;
+				frag.attributes = va.attributes;
+				frag.derivatives.fill(Vec2(0.0f, 0.0f));
+
+				emit_fragment(frag);
+			}
+		}
+
 		// As a placeholder, here's code that draws some lines:
 		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
+		//Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
+		//Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
+		//Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
 		// A1T5: screen-space smooth triangles
 		// TODO: rasterize triangle (see block comment above this function).
