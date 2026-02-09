@@ -508,8 +508,8 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		Vec2 c(vc.fb_position.x, vc.fb_position.y);
 
 		// Edge function helper method
-		auto edge = [](Vec2 v0, Vec2 v1, Vec2 p) -> float {
-			return (v1.x - v0.x) * (p.y - v0.y) - (v1.y - v0.y) * (p.x - v0.x);
+		auto edge = [](Vec2 v0, Vec2 v1, Vec2 p0) -> float {
+			return (v1.x - v0.x) * (p0.y - v0.y) - (v1.y - v0.y) * (p0.x - v0.x);
 			};
 
 		// Compute signed area x2
