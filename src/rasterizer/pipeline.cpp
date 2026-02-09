@@ -548,12 +548,12 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		for (int32_t y = min_y; y <= max_y; ++y) {
 			for (int32_t x = min_x; x <= max_x; ++x) {
 
-				Vec2 p(x + 0.5f, y + 0.5f);
+				Vec2 p0(x + 0.5f, y + 0.5f);
 
 				// Compute edge functions
-				float w0 = edge(b, c, p);
-				float w1 = edge(c, a, p);
-				float w2 = edge(a, b, p);
+				float w0 = edge(b, c, p0);
+				float w1 = edge(c, a, p0);
+				float w2 = edge(a, b, p0);
 
 				// Apply top-left rule
 				bool inside0 = w0 > 0.0f || (w0 == 0.0f && bc_topleft);
