@@ -25,8 +25,52 @@ Spectrum sample_nearest(HDR_Image const &image, Vec2 uv) {
 Spectrum sample_bilinear(HDR_Image const &image, Vec2 uv) {
 	// A1T6: sample_bilinear
 	//TODO: implement bilinear sampling strategy on texture 'image'
+	
+	// Clamp texture coordinates
+	float u = std::clamp(uv.x, 0.0f, 1.0f);
+	float v = std::clamp(uv.y, 0.0f, 1.0f);
+	
+	// Convert to continuous texel coordinates
+	float x = u * image.w;
+	float y = v * image.h;
+	
+	// Find the lower-left texel (subtract 0.5 to center on texels)
+	float x0_f = std::floor(x - 0.5f);
+	float y0_f = std::floor(y - 0.5f);
+	
+	int32_t x0 = int32_t(x0_f);
+	int32_t y0 = int32_t(y0_f);
+	int32_t x1 = x0 + 1;
+	int32_t y1 = y0 + 1;
+	
+	// Clamp to valid texel range
+	x0 = std::clamp(x0, 0, int32_t(image.w) - 1);
+	x1 = std::clamp(x1, 0, int32_t(image.w) - 1);
+	y0 = std::clamp(y0, 0, int32_t(image.h) - 1);
+	y1 = std::clamp(y1, 0, int32_t(image.h) - 1);
+	
+	// Compute interpolation weights
+	float fx = (x - 0.5f) - x0_f;
+	float fy = (y - 0.5f) - y0_f;
+	
+	// Clamp weights to [0,1]
+	fx = std::clamp(fx, 0.0f, 1.0f);
+	fy = std::clamp(fy, 0.0f, 1.0f);
+	
+	// Sample the 4 surrounding texels
+	Spectrum c00 = image.at(x0, y0);
+	Spectrum c10 = image.at(x1, y0);
+	Spectrum c01 = image.at(x0, y1);
+	Spectrum c11 = image.at(x1, y1);
+	
+	// Bilinear interpolation
+	Spectrum c0 = c00 * (1.0f - fx) + c10 * fx;  // interpolate along x at y0
+	Spectrum c1 = c01 * (1.0f - fx) + c11 * fx;  // interpolate along x at y1
+	Spectrum result = c0 * (1.0f - fy) + c1 * fy;  // interpolate along y
+	
+	return result;
 
-	return sample_nearest(image, uv); //placeholder so image doesn't look blank
+	//return sample_nearest(image, uv); //placeholder so image doesn't look blank
 }
 
 
@@ -34,7 +78,43 @@ Spectrum sample_trilinear(HDR_Image const &base, std::vector< HDR_Image > const 
 	// A1T6: sample_trilinear
 	//TODO: implement trilinear sampling strategy on using mip-map 'levels'
 
-	return sample_nearest(base, uv); //placeholder so image doesn't look blank
+	// Handle magnification (lod < 0)
+	if (lod <= 0.0f) {
+		return sample_bilinear(base, uv);
+	}
+
+	// Handle coarsest level (lod >= levels.size())
+	if (lod >= float(levels.size())) {
+		return sample_bilinear(levels.back(), uv);
+	}
+
+	// Determine two levels to sample from
+	int32_t level_low = int32_t(std::floor(lod));
+	int32_t level_high = int32_t(std::ceil(lod));
+	float t = lod - float(level_low);  // interpolation weight
+
+	// Sample from both levels
+	// Remember: lod=1 corresponds to levels[0]
+	Spectrum sample_low, sample_high;
+
+	if (level_low == 0) {
+		sample_low = sample_bilinear(base, uv);
+	}
+	else {
+		sample_low = sample_bilinear(levels[level_low - 1], uv);
+	}
+
+	if (level_high == 0) {
+		sample_high = sample_bilinear(base, uv);
+	}
+	else {
+		sample_high = sample_bilinear(levels[level_high - 1], uv);
+	}
+
+	// Linear interpolation between the two levels
+	return sample_low * (1.0f - t) + sample_high * t;
+
+	//return sample_nearest(base, uv); //placeholder so image doesn't look blank
 }
 
 /*
@@ -90,6 +170,36 @@ void generate_mipmap(HDR_Image const &base, std::vector< HDR_Image > *levels_) {
 
 		// A1T6: generate
 		//TODO: Write code to fill the levels of the mipmap hierarchy by downsampling
+
+		for (uint32_t dy = 0; dy < dst.h; ++dy) {
+			for (uint32_t dx = 0; dx < dst.w; ++dx) {
+				// Each destination pixel corresponds to a 2x2 block in source
+				uint32_t sx0 = dx * 2;
+				uint32_t sy0 = dy * 2;
+				uint32_t sx1 = std::min(sx0 + 1, src.w - 1);
+				uint32_t sy1 = std::min(sy0 + 1, src.h - 1);
+
+				// Sample the 2x2 block (or smaller if at edge)
+				Spectrum sum = src.at(sx0, sy0);
+				uint32_t count = 1;
+
+				if (sx1 != sx0) {
+					sum += src.at(sx1, sy0);
+					count++;
+				}
+				if (sy1 != sy0) {
+					sum += src.at(sx0, sy1);
+					count++;
+				}
+				if (sx1 != sx0 && sy1 != sy0) {
+					sum += src.at(sx1, sy1);
+					count++;
+				}
+
+				// Average the samples
+				dst.at(dx, dy) = sum / float(count);
+			}
+		}
 
 		//Be aware that the alignment of the samples in dst and src will be different depending on whether the image is even or odd.
 

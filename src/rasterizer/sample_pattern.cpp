@@ -28,11 +28,41 @@ std::vector<SamplePattern> const& SamplePattern::all_patterns() {
 		// your SamplePattern is + more detailed your writeup is (such as with images or models for
 		// comparisons of these scenarios), the more extra credit can be awarded (no limit).
 
-		// Please don't change the name or id
 		const uint32_t id = 0;
 		const std::string name = "Custom Sample Pattern";
-		// This will cause it to segfault when used, so be sure to change it!
-		std::vector<Vec3> centers_and_weights = {};
+
+		// We'll create a 4x4 staggered grid (16 samples)
+		// Rows at y=0.125, 0.375, 0.625, 0.875
+		// Even rows (0, 2): x at 0.125, 0.375, 0.625, 0.875
+		// Odd rows (1, 3): x at 0.25, 0.5, 0.75, 1.0 (shifted by 0.125)
+
+		std::vector<Vec3> centers_and_weights;
+		const uint32_t rows = 4;
+		const uint32_t cols = 4;
+		centers_and_weights.reserve(rows * cols);
+
+		float weight = 1.0f / (rows * cols);
+
+		for (uint32_t row = 0; row < rows; ++row) {
+			float y = (row + 0.5f) / rows;
+
+			for (uint32_t col = 0; col < cols; ++col) {
+				float x;
+				if (row % 2 == 0) {
+					// Even rows: regular spacing
+					x = (col + 0.5f) / cols;
+				}
+				else {
+					// Odd rows: shift by half a grid cell (0.5 / cols)
+					x = (col + 0.5f) / cols + 0.5f / cols;
+					// Wrap around if we go past 1.0
+					if (x > 1.0f) x -= 1.0f;
+				}
+
+				centers_and_weights.emplace_back(x, y, weight);
+			}
+		}
+
 		return SamplePattern(id, name, centers_and_weights);
 	};
 	static std::vector<SamplePattern> all = [&]() {

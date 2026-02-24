@@ -31,9 +31,19 @@ HDR_Image Framebuffer::resolve_colors() const {
 
 	HDR_Image image(width, height);
 
+	uint32_t samples_per_pixel = static_cast<uint32_t>(sample_pattern.centers_and_weights.size());
+
 	for (uint32_t y = 0; y < height; ++y) {
 		for (uint32_t x = 0; x < width; ++x) {
-			image.at(x, y) = color_at(x, y, 0);
+			// Accumulate weighted sum of all samples for this pixel
+			Spectrum accumulated_color(0.0f, 0.0f, 0.0f);
+
+			for (uint32_t s = 0; s < samples_per_pixel; ++s) {
+				float weight = sample_pattern.centers_and_weights[s].z;
+				accumulated_color += color_at(x, y, s) * weight;
+			}
+
+			image.at(x, y) = accumulated_color;
 		}
 	}
 

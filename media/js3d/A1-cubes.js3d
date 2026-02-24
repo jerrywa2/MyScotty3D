@@ -56,7 +56,7 @@
 	"textures":{
 		"Texture":{
 			"type":"Constant",
-			"color":[1,0,0],
+			"color":[0.75,0.75,0.75],
 			"scale":1
 		},
 		"white":{
@@ -68,7 +68,7 @@
 	"materials":{
 		"Material":{
 			"type":"Lambertian",
-			"albedo":"Texture"
+			"albedo":"white"
 		},
 		"lam_white":{
 			"type":"Lambertian",
@@ -91,7 +91,7 @@
 				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Flat",
+				"draw style":"Smooth",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			},
@@ -101,7 +101,7 @@
 				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Flat",
+				"draw style":"Correct",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			},
@@ -111,7 +111,7 @@
 				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Flat",
+				"draw style":"Correct",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			},
@@ -121,7 +121,7 @@
 				"material":"Material",
 				"visible":true,
 				"collides":true,
-				"draw style":"Flat",
+				"draw style":"Correct",
 				"blend style":"Blend Replace",
 				"depth style":"Depth Less"
 			}

@@ -122,8 +122,17 @@ struct Lambertian {
 		//  --> 'lod' is \lambda_base from equation (3.17)
 		// reading onward, you will discover that \rho can be computed in a number of ways
 		//  it is up to you to select one that makes sense in this context
+		Vec2 dudx_texels = Vec2(fdx_texcoord.x * wh.x, fdy_texcoord.x * wh.x);
+		Vec2 dudy_texels = Vec2(fdx_texcoord.y * wh.y, fdy_texcoord.y * wh.y);
 
-		float lod = 0.0f; //<-- replace this line
+		// Compute L^2 = max of squared lengths
+		float L_squared = std::max(
+			dudx_texels.x * dudx_texels.x + dudx_texels.y * dudx_texels.y,
+			dudy_texels.x * dudy_texels.x + dudy_texels.y * dudy_texels.y
+		);
+
+		// lod = log2(L) = log2(sqrt(L^2)) = 0.5 * log2(L^2)
+		float lod = 0.5f * std::log2(L_squared);
 		//-----
 
 		Vec3 normal = fa_normal.unit();

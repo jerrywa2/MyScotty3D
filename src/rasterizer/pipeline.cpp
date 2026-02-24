@@ -24,171 +24,189 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 	// 		 You will also need to transform the input and output of the rasterize_* functions to
 	// 	     account for the fact they deal with pixels centered at (0.5,0.5).
 
-	std::vector<ShadedVertex> shaded_vertices;
-	shaded_vertices.reserve(vertices.size());
+	std::vector<Vec3> const& samples = framebuffer.sample_pattern.centers_and_weights;
+	uint32_t samples_per_pixel = static_cast<uint32_t>(samples.size());
 
-	//--------------------------
-	// shade vertices:
-	for (auto const& v : vertices) {
-		ShadedVertex sv;
-		Program::shade_vertex(parameters, v.attributes, &sv.clip_position, &sv.attributes);
-		shaded_vertices.emplace_back(sv);
-	}
+	// Loop over all samples
+	for (uint32_t sample_index = 0; sample_index < samples_per_pixel; ++sample_index) {
 
-	//--------------------------
-	// assemble + clip + homogeneous divide vertices:
-	std::vector<ClippedVertex> clipped_vertices;
+		// Get sample offset within pixel (in [0,1]² space)
+		Vec2 sample_offset(samples[sample_index].x, samples[sample_index].y);
 
-	// reserve some space to avoid reallocations later:
-	if constexpr (primitive_type == PrimitiveType::Lines) {
-		// clipping lines can never produce more than one vertex per input vertex:
-		clipped_vertices.reserve(shaded_vertices.size());
-	} else if constexpr (primitive_type == PrimitiveType::Triangles) {
-		// clipping triangles can produce up to 8 vertices per input vertex:
-		clipped_vertices.reserve(shaded_vertices.size() * 8);
-	}
-	// clang-format off
+		// Compute shift amount (subtract 0.5 because default is pixel center at 0.5, 0.5)
+		Vec2 shift = sample_offset - Vec2(0.5f, 0.5f);
 
-	//coefficients to map from clip coordinates to framebuffer (i.e., "viewport") coordinates:
-	//x: [-1,1] -> [0,width]
-	//y: [-1,1] -> [0,height]
-	//z: [-1,1] -> [0,1] (OpenGL-style depth range)
-	Vec3 const clip_to_fb_scale = Vec3{
-		framebuffer.width / 2.0f,
-		framebuffer.height / 2.0f,
-		0.5f
-	};
-	Vec3 const clip_to_fb_offset = Vec3{
-		0.5f * framebuffer.width,
-		0.5f * framebuffer.height,
-		0.5f
-	};
+		std::vector<ShadedVertex> shaded_vertices;
+		shaded_vertices.reserve(vertices.size());
 
-	// helper used to put output of clipping functions into clipped_vertices:
-	auto emit_vertex = [&](ShadedVertex const& sv) {
-		ClippedVertex cv;
-		float inv_w = 1.0f / sv.clip_position.w;
-		cv.fb_position = clip_to_fb_scale * inv_w * sv.clip_position.xyz() + clip_to_fb_offset;
-		cv.inv_w = inv_w;
-		cv.attributes = sv.attributes;
-		clipped_vertices.emplace_back(cv);
-	};
-
-	// actually do clipping:
-	if constexpr (primitive_type == PrimitiveType::Lines) {
-		for (uint32_t i = 0; i + 1 < shaded_vertices.size(); i += 2) {
-			clip_line(shaded_vertices[i], shaded_vertices[i + 1], emit_vertex);
-		}
-	} else if constexpr (primitive_type == PrimitiveType::Triangles) {
-		for (uint32_t i = 0; i + 2 < shaded_vertices.size(); i += 3) {
-			clip_triangle(shaded_vertices[i], shaded_vertices[i + 1], shaded_vertices[i + 2], emit_vertex);
-		}
-	} else {
-		static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
-	}
-
-	//--------------------------
-	// rasterize primitives:
-
-	std::vector<Fragment> fragments;
-
-	// helper used to put output of rasterization functions into fragments:
-	auto emit_fragment = [&](Fragment const& f) { fragments.emplace_back(f); };
-
-	// actually do rasterization:
-	if constexpr (primitive_type == PrimitiveType::Lines) {
-		for (uint32_t i = 0; i + 1 < clipped_vertices.size(); i += 2) {
-			rasterize_line(clipped_vertices[i], clipped_vertices[i + 1], emit_fragment);
-		}
-	} else if constexpr (primitive_type == PrimitiveType::Triangles) {
-		for (uint32_t i = 0; i + 2 < clipped_vertices.size(); i += 3) {
-			rasterize_triangle(clipped_vertices[i], clipped_vertices[i + 1], clipped_vertices[i + 2], emit_fragment);
-		}
-	} else {
-		static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
-	}
-
-	//--------------------------
-	// depth test + shade + blend fragments:
-	uint32_t out_of_range = 0; // check if rasterization produced fragments outside framebuffer 
-							   // (indicates something is wrong with clipping)
-	for (auto const& f : fragments) {
-
-		// fragment location (in pixels):
-		int32_t x = (int32_t)std::floor(f.fb_position.x);
-		int32_t y = (int32_t)std::floor(f.fb_position.y);
-
-		// if clipping is working properly, this condition shouldn't be needed;
-		// however, it prevents crashes while you are working on your clipping functions,
-		// so we suggest leaving it in place:
-		if (x < 0 || (uint32_t)x >= framebuffer.width || 
-		    y < 0 || (uint32_t)y >= framebuffer.height) {
-			++out_of_range;
-			continue;
+		//--------------------------
+		// shade vertices:
+		for (auto const& v : vertices) {
+			ShadedVertex sv;
+			Program::shade_vertex(parameters, v.attributes, &sv.clip_position, &sv.attributes);
+			shaded_vertices.emplace_back(sv);
 		}
 
-		// local names that refer to destination sample in framebuffer:
-		float& fb_depth = framebuffer.depth_at(x, y, 0);
-		Spectrum& fb_color = framebuffer.color_at(x, y, 0);
+		//--------------------------
+		// assemble + clip + homogeneous divide vertices:
+		std::vector<ClippedVertex> clipped_vertices;
 
+		// reserve some space to avoid reallocations later:
+		if constexpr (primitive_type == PrimitiveType::Lines) {
+			// clipping lines can never produce more than one vertex per input vertex:
+			clipped_vertices.reserve(shaded_vertices.size());
+		}
+		else if constexpr (primitive_type == PrimitiveType::Triangles) {
+			// clipping triangles can produce up to 8 vertices per input vertex:
+			clipped_vertices.reserve(shaded_vertices.size() * 8);
+		}
 
-		// depth test:
-		if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Always) {
-			// "Always" means the depth test always passes.
-		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Never) {
-			// "Never" means the depth test never passes.
-			continue; //discard this fragment
-		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Less) {
-			// "Less" means the depth test passes when the new fragment has depth less than the stored depth.
-			// A1T4: Depth_Less
-			// TODO: implement depth test! We want to only emit fragments that have a depth less than the stored depth, hence "Depth_Less".
-			if (f.fb_position.z >= fb_depth) {
+		//coefficients to map from clip coordinates to framebuffer (i.e., "viewport") coordinates:
+		//x: [-1,1] -> [0,width]
+		//y: [-1,1] -> [0,height]
+		//z: [-1,1] -> [0,1] (OpenGL-style depth range)
+		Vec3 const clip_to_fb_scale = Vec3{
+			framebuffer.width / 2.0f,
+			framebuffer.height / 2.0f,
+			0.5f
+		};
+		Vec3 const clip_to_fb_offset = Vec3{
+			0.5f * framebuffer.width + shift.x,  // Add sample shift here
+			0.5f * framebuffer.height + shift.y, // Add sample shift here
+			0.5f
+		};
+
+		// helper used to put output of clipping functions into clipped_vertices:
+		auto emit_vertex = [&](ShadedVertex const& sv) {
+			ClippedVertex cv;
+			float inv_w = 1.0f / sv.clip_position.w;
+			cv.fb_position = clip_to_fb_scale * inv_w * sv.clip_position.xyz() + clip_to_fb_offset;
+			cv.inv_w = inv_w;
+			cv.attributes = sv.attributes;
+			clipped_vertices.emplace_back(cv);
+			};
+
+		// actually do clipping:
+		if constexpr (primitive_type == PrimitiveType::Lines) {
+			for (uint32_t i = 0; i + 1 < shaded_vertices.size(); i += 2) {
+				clip_line(shaded_vertices[i], shaded_vertices[i + 1], emit_vertex);
+			}
+		}
+		else if constexpr (primitive_type == PrimitiveType::Triangles) {
+			for (uint32_t i = 0; i + 2 < shaded_vertices.size(); i += 3) {
+				clip_triangle(shaded_vertices[i], shaded_vertices[i + 1], shaded_vertices[i + 2], emit_vertex);
+			}
+		}
+		else {
+			static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
+		}
+
+		//--------------------------
+		// rasterize primitives:
+
+		std::vector<Fragment> fragments;
+
+		// helper used to put output of rasterization functions into fragments:
+		auto emit_fragment = [&](Fragment const& f) { fragments.emplace_back(f); };
+
+		// actually do rasterization:
+		if constexpr (primitive_type == PrimitiveType::Lines) {
+			for (uint32_t i = 0; i + 1 < clipped_vertices.size(); i += 2) {
+				rasterize_line(clipped_vertices[i], clipped_vertices[i + 1], emit_fragment);
+			}
+		}
+		else if constexpr (primitive_type == PrimitiveType::Triangles) {
+			for (uint32_t i = 0; i + 2 < clipped_vertices.size(); i += 3) {
+				rasterize_triangle(clipped_vertices[i], clipped_vertices[i + 1], clipped_vertices[i + 2], emit_fragment);
+			}
+		}
+		else {
+			static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
+		}
+
+		//--------------------------
+		// depth test + shade + blend fragments:
+		uint32_t out_of_range = 0; // check if rasterization produced fragments outside framebuffer 
+		// (indicates something is wrong with clipping)
+		for (auto const& f : fragments) {
+
+			// fragment location (in pixels):
+			int32_t x = (int32_t)std::floor(f.fb_position.x);
+			int32_t y = (int32_t)std::floor(f.fb_position.y);
+
+			// if clipping is working properly, this condition shouldn't be needed;
+			// however, it prevents crashes while you are working on your clipping functions,
+			// so we suggest leaving it in place:
+			if (x < 0 || (uint32_t)x >= framebuffer.width ||
+				y < 0 || (uint32_t)y >= framebuffer.height) {
+				++out_of_range;
 				continue;
 			}
-		} else {
-			static_assert((flags & PipelineMask_Depth) <= Pipeline_Depth_Always, "Unknown depth test flag.");
-		}
 
-		// if depth test passes, and depth writes aren't disabled, write depth to depth buffer:
-		if constexpr (!(flags & Pipeline_DepthWriteDisableBit)) {
-			fb_depth = f.fb_position.z;
-		}
+			// local names that refer to destination sample in framebuffer:
+			float& fb_depth = framebuffer.depth_at(x, y, sample_index);
+			Spectrum& fb_color = framebuffer.color_at(x, y, sample_index);
 
-		// shade fragment:
-		ShadedFragment sf;
-		sf.fb_position = f.fb_position;
-		Program::shade_fragment(parameters, f.attributes, f.derivatives, &sf.color, &sf.opacity);
 
-		// write color to framebuffer if color writes aren't disabled:
-		if constexpr (!(flags & Pipeline_ColorWriteDisableBit)) {
-			// blend fragment:
-			if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Replace) {
-				fb_color = sf.color;
-			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Add) {
-				// A1T4: Blend_Add
-				// TODO: framebuffer color should have fragment color multiplied by fragment opacity added to it.
-				//fb_color = sf.color;
-				fb_color += sf.color * sf.opacity;
-			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Over) {
-				// A1T4: Blend_Over
-				// TODO: set framebuffer color to the result of "over" blending (also called "alpha blending") the fragment color over the framebuffer color, using the fragment's opacity
-				// 		 You may assume that the framebuffer color has its alpha premultiplied already, and you just want to compute the resulting composite color
-				//fb_color = sf.color;
-				fb_color = sf.color * sf.opacity + (1.0f - sf.opacity) * fb_color;
-			} else {
-				static_assert((flags & PipelineMask_Blend) <= Pipeline_Blend_Over, "Unknown blending flag.");
+			// depth test:
+			if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Always) {
+				// "Always" means the depth test always passes.
+			}
+			else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Never) {
+				// "Never" means the depth test never passes.
+				continue; //discard this fragment
+			}
+			else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Less) {
+				// "Less" means the depth test passes when the new fragment has depth less than the stored depth.
+				// A1T4: Depth_Less
+				if (f.fb_position.z >= fb_depth) {
+					continue;
+				}
+			}
+			else {
+				static_assert((flags & PipelineMask_Depth) <= Pipeline_Depth_Always, "Unknown depth test flag.");
+			}
+
+			// if depth test passes, and depth writes aren't disabled, write depth to depth buffer:
+			if constexpr (!(flags & Pipeline_DepthWriteDisableBit)) {
+				fb_depth = f.fb_position.z;
+			}
+
+			// shade fragment:
+			ShadedFragment sf;
+			sf.fb_position = f.fb_position;
+			Program::shade_fragment(parameters, f.attributes, f.derivatives, &sf.color, &sf.opacity);
+
+			// write color to framebuffer if color writes aren't disabled:
+			if constexpr (!(flags & Pipeline_ColorWriteDisableBit)) {
+				// blend fragment:
+				if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Replace) {
+					fb_color = sf.color;
+				}
+				else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Add) {
+					// A1T4: Blend_Add
+					fb_color += sf.color * sf.opacity;
+				}
+				else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Over) {
+					// A1T4: Blend_Over
+					fb_color = sf.color * sf.opacity + (1.0f - sf.opacity) * fb_color;
+				}
+				else {
+					static_assert((flags & PipelineMask_Blend) <= Pipeline_Blend_Over, "Unknown blending flag.");
+				}
 			}
 		}
-	}
-	if (out_of_range > 0) {
-		if constexpr (primitive_type == PrimitiveType::Lines) {
-			warn("Produced %d fragments outside framebuffer; this indicates something is likely "
-			     "wrong with the clip_line function.",
-			     out_of_range);
-		} else if constexpr (primitive_type == PrimitiveType::Triangles) {
-			warn("Produced %d fragments outside framebuffer; this indicates something is likely "
-			     "wrong with the clip_triangle function.",
-			     out_of_range);
+		if (out_of_range > 0) {
+			if constexpr (primitive_type == PrimitiveType::Lines) {
+				warn("Produced %d fragments outside framebuffer; this indicates something is likely "
+					"wrong with the clip_line function.",
+					out_of_range);
+			}
+			else if constexpr (primitive_type == PrimitiveType::Triangles) {
+				warn("Produced %d fragments outside framebuffer; this indicates something is likely "
+					"wrong with the clip_triangle function.",
+					out_of_range);
+			}
 		}
 	}
 }
@@ -498,51 +516,52 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 	//  same code paths. Be aware, however, that all of them need to remain working!
 	//  (e.g., if you break Flat while implementing Correct, you won't get points
 	//   for Flat.)
+	
+	// Extract 2D positions
+	Vec2 a(va.fb_position.x, va.fb_position.y);
+	Vec2 b(vb.fb_position.x, vb.fb_position.y);
+	Vec2 c(vc.fb_position.x, vc.fb_position.y);
+
+	// Edge function helper method
+	auto edge = [](Vec2 v0, Vec2 v1, Vec2 p0) -> float {
+		return (v1.x - v0.x) * (p0.y - v0.y) - (v1.y - v0.y) * (p0.x - v0.x);
+	};
+
+	// Compute signed area x2
+	float area = edge(a, b, c);
+
+	// Degenerate triangles
+	if (std::abs(area) < 1e-6f) return;
+
+	bool is_ccw = (area > 0.0f);
+	float area_inv = 1.0f / area;
+
+	// Bounding box
+	int32_t min_x = std::floor(std::min({ a.x, b.x, c.x }));
+	int32_t max_x = std::floor(std::max({ a.x, b.x, c.x }));
+	int32_t min_y = std::floor(std::min({ a.y, b.y, c.y }));
+	int32_t max_y = std::floor(std::max({ a.y, b.y, c.y }));
+
+	// Top-left rule helper method
+	auto is_top_left = [&](Vec2 v0, Vec2 v1) -> bool {
+		float dx = v1.x - v0.x;
+		float dy = v1.y - v0.y;
+
+		if (is_ccw) {
+			return (dy == 0.0f && dx < 0.0f) || (dy < 0.0f);
+		}
+		else {
+			return (dy == 0.0f && dx > 0.0f) || (dy > 0.0f);
+		}
+	};
+
+	bool bc_topleft = is_top_left(b, c);
+	bool ca_topleft = is_top_left(c, a);
+	bool ab_topleft = is_top_left(a, b);
+	
 	if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Flat) {
 		// A1T3: flat triangles
 		// TODO: rasterize triangle (see block comment above this function).
-
-		// Extract 2D positions
-		Vec2 a(va.fb_position.x, va.fb_position.y);
-		Vec2 b(vb.fb_position.x, vb.fb_position.y);
-		Vec2 c(vc.fb_position.x, vc.fb_position.y);
-
-		// Edge function helper method
-		auto edge = [](Vec2 v0, Vec2 v1, Vec2 p0) -> float {
-			return (v1.x - v0.x) * (p0.y - v0.y) - (v1.y - v0.y) * (p0.x - v0.x);
-			};
-
-		// Compute signed area x2
-		float area = edge(a, b, c);
-
-		// Degenerate triangles
-		if (std::abs(area) < 1e-6f) return;
-
-		bool is_ccw = (area > 0.0f);
-		float area_inv = 1.0f / area;
-
-		// Bounding box
-		int32_t min_x = std::floor(std::min({ a.x, b.x, c.x }));
-		int32_t max_x = std::floor(std::max({ a.x, b.x, c.x }));
-		int32_t min_y = std::floor(std::min({ a.y, b.y, c.y }));
-		int32_t max_y = std::floor(std::max({ a.y, b.y, c.y }));
-
-		// Top-left rule helper method
-		auto is_top_left = [&](Vec2 v0, Vec2 v1) -> bool {
-			float dx = v1.x - v0.x;
-			float dy = v1.y - v0.y;
-
-			if (is_ccw) {
-				return (dy == 0.0f && dx < 0.0f) || (dy < 0.0f);
-			}
-			else {
-				return (dy == 0.0f && dx > 0.0f) || (dy > 0.0f);
-			}
-			};
-
-		bool bc_topleft = is_top_left(b, c);
-		bool ca_topleft = is_top_left(c, a);
-		bool ab_topleft = is_top_left(a, b);
 
 		// Rasterize
 		for (int32_t y = min_y; y <= max_y; ++y) {
@@ -596,18 +615,183 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		//Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
 		// A1T5: screen-space smooth triangles
-		// TODO: rasterize triangle (see block comment above this function).
 
-		// As a placeholder, here's code that calls the Flat interpolation version of the function:
-		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, (flags & ~PipelineMask_Interp) | Pipeline_Interp_Flat>::rasterize_triangle(va, vb, vc, emit_fragment);
+		// Compute how barycentric coordinates change with screen position
+		// For a triangle, the gradient of barycentric coordinates w.r.t. screen position is constant
+		Vec2 d_lambda_a_d_screen = Vec2{
+			(b.y - c.y) * area_inv,
+			(c.x - b.x) * area_inv
+		};
+		Vec2 d_lambda_b_d_screen = Vec2{
+			(c.y - a.y) * area_inv,
+			(a.x - c.x) * area_inv
+		};
+		Vec2 d_lambda_c_d_screen = Vec2{
+			(a.y - b.y) * area_inv,
+			(b.x - a.x) * area_inv
+		};
+
+		// Rasterize (single pixel at a time is fine)
+		for (int32_t y = min_y; y <= max_y; ++y) {
+			for (int32_t x = min_x; x <= max_x; ++x) {
+				Vec2 p0(x + 0.5f, y + 0.5f);
+
+				// Check if inside triangle (with top-left rule)
+				float w0 = edge(b, c, p0);
+				float w1 = edge(c, a, p0);
+				float w2 = edge(a, b, p0);
+
+				// Apply top-left rule
+				bool inside0 = w0 > 0.0f || (w0 == 0.0f && bc_topleft);
+				bool inside1 = w1 > 0.0f || (w1 == 0.0f && ca_topleft);
+				bool inside2 = w2 > 0.0f || (w2 == 0.0f && ab_topleft);
+
+				bool inside;
+				if (is_ccw) {
+					inside = inside0 && inside1 && inside2;
+				}
+				else {
+					inside0 = w0 < 0.0f || (w0 == 0.0f && bc_topleft);
+					inside1 = w1 < 0.0f || (w1 == 0.0f && ca_topleft);
+					inside2 = w2 < 0.0f || (w2 == 0.0f && ab_topleft);
+					inside = inside0 && inside1 && inside2;
+				}
+
+				if (!inside) continue;
+
+				// Compute barycentric coordinates
+				float lambda_a = w0 * area_inv;
+				float lambda_b = w1 * area_inv;
+				float lambda_c = w2 * area_inv;
+
+				// Fill fragment
+				Fragment frag;
+				frag.fb_position.x = x + 0.5f;
+				frag.fb_position.y = y + 0.5f;
+				frag.fb_position.z = lambda_a * va.fb_position.z +
+					lambda_b * vb.fb_position.z +
+					lambda_c * vc.fb_position.z;
+
+				// Ddirect interpolation of attributes
+				for (uint32_t i = 0; i < va.attributes.size(); ++i) {
+					frag.attributes[i] = lambda_a * va.attributes[i] +
+						lambda_b * vb.attributes[i] +
+						lambda_c * vc.attributes[i];
+				}
+
+				// Compute derivatives analytically
+				for (uint32_t i = 0; i < frag.derivatives.size(); ++i) {
+					frag.derivatives[i].x = d_lambda_a_d_screen.x * va.attributes[i] +
+						d_lambda_b_d_screen.x * vb.attributes[i] +
+						d_lambda_c_d_screen.x * vc.attributes[i];
+					frag.derivatives[i].y = d_lambda_a_d_screen.y * va.attributes[i] +
+						d_lambda_b_d_screen.y * vb.attributes[i] +
+						d_lambda_c_d_screen.y * vc.attributes[i];
+				}
+
+				emit_fragment(frag);
+			}
+		}
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Correct) {
 		// A1T5: perspective correct triangles
-		// TODO: rasterize triangle (block comment above this function).
 
-		// As a placeholder, here's code that calls the Screen-space interpolation function:
-		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, (flags & ~PipelineMask_Interp) | Pipeline_Interp_Smooth>::rasterize_triangle(va, vb, vc, emit_fragment);
+		// Compute how barycentric coordinates change with screen position
+		Vec2 d_lambda_a_d_screen = Vec2{
+			(b.y - c.y) * area_inv,
+			(c.x - b.x) * area_inv
+		};
+		Vec2 d_lambda_b_d_screen = Vec2{
+			(c.y - a.y) * area_inv,
+			(a.x - c.x) * area_inv
+		};
+		Vec2 d_lambda_c_d_screen = Vec2{
+			(a.y - b.y) * area_inv,
+			(b.x - a.x) * area_inv
+		};
+
+		// Rasterize
+		for (int32_t y = min_y; y <= max_y; ++y) {
+			for (int32_t x = min_x; x <= max_x; ++x) {
+				Vec2 p0(x + 0.5f, y + 0.5f);
+
+				// Check if inside triangle (with top-left rule)
+				float w0 = edge(b, c, p0);
+				float w1 = edge(c, a, p0);
+				float w2 = edge(a, b, p0);
+
+				// Apply top-left rule
+				bool inside0 = w0 > 0.0f || (w0 == 0.0f && bc_topleft);
+				bool inside1 = w1 > 0.0f || (w1 == 0.0f && ca_topleft);
+				bool inside2 = w2 > 0.0f || (w2 == 0.0f && ab_topleft);
+
+				bool inside;
+				if (is_ccw) {
+					inside = inside0 && inside1 && inside2;
+				}
+				else {
+					inside0 = w0 < 0.0f || (w0 == 0.0f && bc_topleft);
+					inside1 = w1 < 0.0f || (w1 == 0.0f && ca_topleft);
+					inside2 = w2 < 0.0f || (w2 == 0.0f && ab_topleft);
+					inside = inside0 && inside1 && inside2;
+				}
+
+				if (!inside) continue;
+
+				// Compute barycentric coordinates
+				float lambda_a = w0 * area_inv;
+				float lambda_b = w1 * area_inv;
+				float lambda_c = w2 * area_inv;
+
+				// Fill fragment
+				Fragment frag;
+				frag.fb_position.x = x + 0.5f;
+				frag.fb_position.y = y + 0.5f;
+				frag.fb_position.z = lambda_a * va.fb_position.z +
+					lambda_b * vb.fb_position.z +
+					lambda_c * vc.fb_position.z;
+
+				// Interpolate 1/w
+				float inv_w_interp = lambda_a * va.inv_w +
+					lambda_b * vb.inv_w +
+					lambda_c * vc.inv_w;
+
+				// Interpolate attr*inv_w, then divide by inv_w_interp
+				for (uint32_t i = 0; i < va.attributes.size(); ++i) {
+					float attr_over_w = lambda_a * va.attributes[i] * va.inv_w +
+						lambda_b * vb.attributes[i] * vb.inv_w +
+						lambda_c * vc.attributes[i] * vc.inv_w;
+
+					frag.attributes[i] = attr_over_w / inv_w_interp;
+				}
+
+				// Compute derivatives using quotient rule
+				// d/dx(f/g) = (f'*g - f*g') / g^2
+				float d_inv_w_dx = d_lambda_a_d_screen.x * va.inv_w +
+					d_lambda_b_d_screen.x * vb.inv_w +
+					d_lambda_c_d_screen.x * vc.inv_w;
+				float d_inv_w_dy = d_lambda_a_d_screen.y * va.inv_w +
+					d_lambda_b_d_screen.y * vb.inv_w +
+					d_lambda_c_d_screen.y * vc.inv_w;
+
+				for (uint32_t i = 0; i < frag.derivatives.size(); ++i) {
+					float attr_over_w = lambda_a * va.attributes[i] * va.inv_w +
+						lambda_b * vb.attributes[i] * vb.inv_w +
+						lambda_c * vc.attributes[i] * vc.inv_w;
+
+					float d_attr_over_w_dx = d_lambda_a_d_screen.x * va.attributes[i] * va.inv_w +
+						d_lambda_b_d_screen.x * vb.attributes[i] * vb.inv_w +
+						d_lambda_c_d_screen.x * vc.attributes[i] * vc.inv_w;
+					float d_attr_over_w_dy = d_lambda_a_d_screen.y * va.attributes[i] * va.inv_w +
+						d_lambda_b_d_screen.y * vb.attributes[i] * vb.inv_w +
+						d_lambda_c_d_screen.y * vc.attributes[i] * vc.inv_w;
+
+					frag.derivatives[i].x = (d_attr_over_w_dx * inv_w_interp - attr_over_w * d_inv_w_dx) / (inv_w_interp * inv_w_interp);
+					frag.derivatives[i].y = (d_attr_over_w_dy * inv_w_interp - attr_over_w * d_inv_w_dy) / (inv_w_interp * inv_w_interp);
+				}
+
+				emit_fragment(frag);
+			}
+		}
 	}
 }
 
