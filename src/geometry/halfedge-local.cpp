@@ -722,10 +722,10 @@ std::optional<Halfedge_Mesh::VertexRef> Halfedge_Mesh::collapse_edge(EdgeRef e) 
 	{
 		t_prev = t_prev->next;
 	}
-	HalfedgeRef h_next_twin = h_next->twin;
-	HalfedgeRef h_prev_twin = h_prev->twin;
-	HalfedgeRef t_next_twin = t_next->twin;
-	HalfedgeRef t_prev_twin = t_prev->twin;
+	//HalfedgeRef h_next_twin = h_next->twin;
+	//HalfedgeRef h_prev_twin = h_prev->twin;
+	//HalfedgeRef t_next_twin = t_next->twin;
+	//HalfedgeRef t_prev_twin = t_prev->twin;
 
 
 	// Assign halfedges leaving vt to vh
