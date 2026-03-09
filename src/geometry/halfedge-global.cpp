@@ -14,6 +14,99 @@
 void Halfedge_Mesh::triangulate() {
 	//A2G1: triangulation
 	
+	
+	//preamble: check for any non-triangular non-boundary faces:
+	for (FaceRef f = faces.begin(); f != faces.end(); ++f) {
+		if (f->boundary) continue; //ignore boundary faces for this check
+		if (f->halfedge->next->next->next != f->halfedge) {
+			//found a non-triangular face!
+			VertexRef v = f->halfedge->vertex;
+			HalfedgeRef h_next = f->halfedge;
+			std::vector<HalfedgeRef> hf;
+
+			do {
+				hf.push_back(h_next);
+				h_next = h_next->next;
+			} while (h_next != f->halfedge);
+
+			HalfedgeRef h_prev = hf[0];
+			for (size_t i = 1; i + 1 < hf.size(); ++i) {
+				// Skips first and last halfedges,
+				// which are already part of the first and last triangle, respectively.
+				
+				// Handle two edge cases
+				if (i == 1)
+				{
+					EdgeRef e = emplace_edge();
+					HalfedgeRef h0 = emplace_halfedge();
+					HalfedgeRef h1 = emplace_halfedge();
+
+					std::cout << "Start case: " << i << std::endl;
+					std::cout << "Triangulating face " << f->id << ": adding edge " << e->id << " between vertices " << v->id << " and " << hf[i]->vertex->id << std::endl;
+					std::cout << "Halfedges " << h0->id << " and " << h1->id << std::endl;
+					hf[i]->next = h0;
+					h0->next = h_prev;
+					h0->twin = h1;
+					h1->twin = h0;
+					
+					e->halfedge = h0;
+					h0->edge = e;
+					h1->edge = e;
+					h0->face = f;
+
+					h0->vertex = hf[i]->twin->vertex;
+					h1->vertex = v;
+
+					h_prev = h1;
+				}
+				else if (i == hf.size() - 2)
+				{
+					std::cout << "End case: " << i << std::endl;
+					h_prev->next = hf[i];
+					hf[i]->next->next = h_prev;
+
+					FaceRef fn = emplace_face();
+					std::cout << "Triangulating face " << f->id << std::endl;
+					fn->halfedge = hf[i];
+					h_prev->face = fn;
+					hf[i]->face = fn;
+					hf[i]->next->face = fn;
+				}
+				else
+				{
+					EdgeRef e = emplace_edge();
+					HalfedgeRef h0 = emplace_halfedge();
+					HalfedgeRef h1 = emplace_halfedge();
+
+					std::cout << "Middle case: " << i << std::endl;
+					std::cout << "Triangulating face " << f->id << ": adding edge " << e->id << " between vertices " << v->id << " and " << hf[i]->twin->vertex->id << std::endl;
+					std::cout << "Halfedges " << h0->id << " and " << h1->id << std::endl;
+					hf[i]->next = h0;
+					h0->next = h_prev;
+					h_prev->next = hf[i];
+					h0->twin = h1;
+					h1->twin = h0;
+
+					e->halfedge = h0;
+					h0->edge = e;
+					h1->edge = e;
+
+					FaceRef fn = emplace_face();
+					fn->halfedge = hf[i];
+					h_prev->face = fn;
+					hf[i]->face = fn;
+					h0->face = fn;
+
+					h0->vertex = hf[i]->twin->vertex;
+					h1->vertex = v;
+
+					h_prev = h1;
+				}
+			}
+			std::cout << "---------------------------------------" << std::endl;
+		}
+	}
+
 }
 
 /*
@@ -33,17 +126,27 @@ void Halfedge_Mesh::linear_subdivide() {
 	// For every vertex, assign its current position to vertex_positions[v]:
 
 	//(TODO)
+	for (VertexCRef v = vertices.begin(); v != vertices.end(); ++v) {
+		vertex_positions[v] = v->position;
+	}
 
     // For every edge, assign the midpoint of its adjacent vertices to edge_vertex_positions[e]:
 	// (you may wish to investigate the helper functions of Halfedge_Mesh::Edge)
 
 	//(TODO)
+	for (EdgeCRef e = edges.begin(); e != edges.end(); ++e) {
+		edge_vertex_positions[e] = e->center();
+	}
 
     // For every *non-boundary* face, assign the centroid (i.e., arithmetic mean) to face_vertex_positions[f]:
 	// (you may wish to investigate the helper functions of Halfedge_Mesh::Face)
 
 	//(TODO)
-
+	for (FaceCRef f = faces.begin(); f != faces.end(); ++f) {
+		if (!f->boundary) {
+			face_vertex_positions[f] = f->center();
+		}
+	}
 
 	//use the helper function to actually perform the subdivision:
 	catmark_subdivide_helper(vertex_positions, edge_vertex_positions, face_vertex_positions);
