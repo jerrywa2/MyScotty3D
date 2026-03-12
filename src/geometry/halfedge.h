@@ -91,6 +91,7 @@ public:
 	//add a vertex at the midpoint of an edge and divide the adjacent non-boundary faces
 	// - the newly added vertex's halfedge should be aligned with the original edge
 	std::optional<VertexRef> split_edge(EdgeRef e);
+	std::optional<EdgeRef> split_face(FaceRef f, HalfedgeRef from, HalfedgeRef to);
 
 	//put a vertex in the center of a face; divide f into a triangle fan around the new vertex
 	std::optional<VertexRef> inset_vertex(FaceRef f);

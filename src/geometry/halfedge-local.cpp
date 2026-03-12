@@ -219,149 +219,139 @@ std::optional<Halfedge_Mesh::VertexRef> Halfedge_Mesh::bisect_edge(EdgeRef e) {
  *
  * Do not split adjacent boundary faces.
  */
+
+
 std::optional<Halfedge_Mesh::VertexRef> Halfedge_Mesh::split_edge(EdgeRef e) {
-	// A2L2 (REQUIRED): split_edge
-	
-	HalfedgeRef h = e->halfedge;
-	HalfedgeRef t = h->twin;
-	FaceRef     fh = h->face;
-	FaceRef     ft = t->face;
-	VertexRef   vh = h->vertex;
-	VertexRef   vt = t->vertex;
-	HalfedgeRef h_prev = h->next;
-	while (h_prev->next != h)
-	{
-		h_prev = h_prev->next;
+	// Gather halfedges, vertices, and faces around the edge
+	HalfedgeRef h0 = e->halfedge;
+	HalfedgeRef h1 = h0->twin;
+
+	HalfedgeRef h2 = h0->next;
+	HalfedgeRef h3 = h2->next;
+	HalfedgeRef h4 = h1->next;
+	HalfedgeRef h5 = h4->next;
+
+	VertexRef va = h2->vertex;
+	VertexRef vb = h4->vertex;
+	VertexRef vc = h3->vertex;
+	VertexRef vd = h5->vertex;
+
+	FaceRef f0 = h0->face;
+	FaceRef f1 = h1->face;
+
+	bool bo0 = f0->boundary;
+	bool bo1 = f1->boundary;
+
+	HalfedgeRef h0_prev = h0; while (h0_prev->next != h0) h0_prev = h0_prev->next;
+	HalfedgeRef h1_prev = h1; while (h1_prev->next != h1) h1_prev = h1_prev->next;
+
+	// Allocate the new vertex and the two halves of the split edge
+	VertexRef m = emplace_vertex();
+	m->position = e->center();
+
+	EdgeRef ea = emplace_edge(false);
+	EdgeRef eb = emplace_edge(false);
+
+	HalfedgeRef a0 = emplace_halfedge();
+	HalfedgeRef a1 = emplace_halfedge();
+	HalfedgeRef b0 = emplace_halfedge();
+	HalfedgeRef b1 = emplace_halfedge();
+
+	ea->halfedge = a0;
+	eb->halfedge = b1;
+
+	// Conditionally allocate geometry for each non-boundary face
+	EdgeRef ec, ed;
+	FaceRef f2, f3;
+	HalfedgeRef c0, c1, d0, d1;
+
+	if (!f0->boundary) {
+		ec = emplace_edge();
+		c0 = emplace_halfedge();
+		c1 = emplace_halfedge();
+		f2 = emplace_face(false);
 	}
-	HalfedgeRef t_prev = t->next;
-	while (t_prev->next != t)
-	{
-		t_prev = t_prev->next;
+	if (!f1->boundary) {
+		ed = emplace_edge();
+		d0 = emplace_halfedge();
+		d1 = emplace_halfedge();
+		f3 = emplace_face(false);
 	}
 
-	if (!fh->boundary || !ft->boundary)
-	{
-		// Split fh by adding a vertex at the midpoint of e and connecting it to the ccw-most vertex from h in fh
-		VertexRef vm = emplace_vertex();
-		//std::cout << "Splitting edge " << e->id << " with vertex " << vm->id << std::endl;
-		vm->position = e->center();
-		vm->halfedge = !fh->boundary ? h : t;
+	// Wire up the h0 side
+	if (!f0->boundary) {
+		a0->twin = a1; a0->next = h2; a0->vertex = m;  a0->edge = ea; a0->face = f2;
+		b0->twin = b1; b0->next = c1; b0->vertex = vb; b0->edge = eb; b0->face = f0;
+		c0->twin = c1; c0->next = a0; c0->vertex = vc; c0->edge = ec; c0->face = f2;
+		c1->twin = c0; c1->next = h3; c1->vertex = m;  c1->edge = ec; c1->face = f0;
 
-		EdgeRef em = emplace_edge();
-		em->halfedge = t;
-		h->vertex = vm;
-		t->vertex = vm;
-		t->edge = em;
+		ec->halfedge = c0;
+		m->halfedge = a0;
+		vc->halfedge = c0;
+		vb->halfedge = b0;
 
-		// New halfedge twin for h
-		HalfedgeRef twinh = emplace_halfedge();
-		//std::cout << "New halfedge twin for h " << twinh->id << std::endl;
-		twinh->twin = h;
-		h->twin = twinh;
-		twinh->next = t;
-		twinh->vertex = vt;
-		vt->halfedge = twinh;
-		twinh->edge = h->edge;
-		twinh->face = ft;
-		if (ft->boundary)
-		{
-			h->next->twin->next = twinh;
-		}
+		f2->halfedge = c0;
+		f0->halfedge = h0_prev;
 
-		// New halfedge twin for t
-		HalfedgeRef twint = emplace_halfedge();
-		//std::cout << "New halfedge twin for t " << twint->id << std::endl;
-		twint->twin = t;
-		t->twin = twint;
-		twint->next = h;
-		twint->vertex = vh;
-		vh->halfedge = twint;
-		twint->edge = t->edge;
-		twint->face = fh;
-		if (fh->boundary)
-		{
-			t->next->twin->next = twint;
-		}
+		h2->next = c0;
+		h0_prev->next = b0;
 
-		if (!fh->boundary)
-		{
-			h_prev->next = twint;
-
-			// Create new face
-			FaceRef fhm = emplace_face();
-			//std::cout << "New face for h " << fhm->id << std::endl;
-			fhm->halfedge = h;
-			h->face = fhm;
-			h->next->face = fhm;
-			
-			// Close new face with new edge and halfedges
-			EdgeRef eh = emplace_edge();
-			HalfedgeRef eh_h = emplace_halfedge();
-			HalfedgeRef eh_t = emplace_halfedge();
-			//std::cout << "New edge and halfedges for h " << eh->id << ", " << eh_h->id << ", " << eh_t->id << std::endl;
-			eh->halfedge = eh_h;
-			eh_h->twin = eh_t;
-			eh_t->twin = eh_h;
-			eh_h->next = h;
-			eh_t->next = h->next->next;
-			h->next->next = eh_h;
-			eh_h->vertex = h->next->twin->vertex;
-			eh_t->vertex = vm;
-			eh_h->edge = eh;
-			eh_t->edge = eh;
-			eh_h->face = fhm;
-			eh_t->face = fh;
-
-			if (fh->halfedge == h || fh->halfedge == h->next)
-			{
-				fh->halfedge = eh_t;
-			}
-
-			// New next for twin t if new e created
-			twint->next = eh_t;
-		}
-		
-		if (!ft->boundary)
-		{
-			t_prev->next = twinh;
-
-			// Create new face
-			FaceRef ftm = emplace_face();
-			//std::cout << "New face for t " << ftm->id << std::endl;
-			ftm->halfedge = t;
-			t->face = ftm;
-			t->next->face = ftm;
-
-			// Close new face with new edge and halfedges
-			EdgeRef et = emplace_edge();
-			HalfedgeRef et_h = emplace_halfedge();
-			HalfedgeRef et_t = emplace_halfedge();
-			et->halfedge = et_h;
-			et_h->twin = et_t;
-			et_t->twin = et_h;
-			et_h->next = t;
-			et_t->next = t->next->next;
-			t->next->next = et_h;
-			et_h->vertex = t->next->twin->vertex;
-			et_t->vertex = vm;
-			et_h->edge = et;
-			et_t->edge = et;
-			et_h->face = ftm;
-			et_t->face = ft;
-
-			if (ft->halfedge == t || ft->halfedge == t->next)
-			{
-				ft->halfedge = et_t;
-			}
-
-			// New next for twin t if new e created
-			twinh->next = et_t;
-		}
-
-		return vm;
-
+		HalfedgeRef cur = a0; do { cur->face = f2; cur = cur->next; } while (cur != a0);
+		cur = b0;             do { cur->face = f0; cur = cur->next; } while (cur != b0);
 	}
-    return std::nullopt;
+
+	if (f0->boundary) {
+		a0->twin = a1; a0->next = h2;  a0->vertex = m;  a0->edge = ea; a0->face = f0;
+		b0->twin = b1; b0->next = a0;  b0->vertex = vb; b0->edge = eb; b0->face = f0;
+
+		h0_prev->next = b0;
+
+		ea->halfedge = a0;
+		eb->halfedge = b0;
+		f0->halfedge = a0;
+		m->halfedge = a0;
+	}
+
+	// Wire up the h1 side
+	if (!f1->boundary) {
+		a1->twin = a0; a1->next = d1; a1->vertex = va; a1->edge = ea; a1->face = f3;
+		b1->twin = b0; b1->next = h4; b1->vertex = m;  b1->edge = eb; b1->face = f1;
+		d0->twin = d1; d0->next = b1; d0->vertex = vd; d0->edge = ed; d0->face = f1;
+		d1->twin = d0; d1->next = h5; d1->vertex = m;  d1->edge = ed; d1->face = f3;
+
+		ed->halfedge = d0;
+		vd->halfedge = d0;
+		va->halfedge = a1;
+
+		f3->halfedge = d1;
+		f1->halfedge = h4;
+
+		h4->next = d0;
+		h1_prev->next = a1;
+		d0->next = b1;
+
+		HalfedgeRef cur = a1; do { cur->face = f3; cur = cur->next; } while (cur != a1);
+		cur = b1;             do { cur->face = f1; cur = cur->next; } while (cur != b1);
+	}
+
+	if (bo1) {
+		a1->twin = a0; a1->next = b1;  a1->vertex = va; a1->edge = ea; a1->face = f1;
+		b1->twin = b0; b1->next = h4;  b1->vertex = m;  b1->edge = eb; b1->face = f1;
+
+		h1_prev->next = a1;
+
+		ea->halfedge = a1;
+		eb->halfedge = b1;
+		f1->halfedge = b1;
+		m->halfedge = b1;
+	}
+
+	// Remove the original edge and its halfedges
+	erase_halfedge(h0);
+	erase_halfedge(h1);
+	erase_edge(e);
+
+	return m;
 }
 
 
@@ -561,45 +551,64 @@ std::optional<Halfedge_Mesh::FaceRef> Halfedge_Mesh::extrude_face(FaceRef f) {
  *
  * does not create or destroy mesh elements.
  */
+
 std::optional<Halfedge_Mesh::EdgeRef> Halfedge_Mesh::flip_edge(EdgeRef e) {
-	//A2L1: Flip Edge
+	if (e->on_boundary())
+		return std::nullopt;
+
 	HalfedgeRef h = e->halfedge;
 	HalfedgeRef t = h->twin;
-	FaceRef     fh = h->face;
-	FaceRef     ft = t->face;
-	VertexRef   v1;
-	VertexRef   v2;
 
-	if (fh->boundary || ft->boundary) return std::nullopt;
+	// Invalid mesh check
+	if (h->vertex->degree() <= 2 || t->vertex->degree() <= 2)
+		return std::nullopt;
 
-	// Change vertices
-	if (h->vertex->halfedge == h) h->vertex->halfedge = t->next;
-	if (t->vertex->halfedge == t) t->vertex->halfedge = h->next;
-	v1 = t->next->twin->vertex;
-	v2 = h->next->twin->vertex;
-	if (v1 == v2) return std::nullopt; //Reject if degenerate edge would be created
-	h->vertex = v1;
-	t->vertex = v2;
-
-	// Change faces
-	h->next->face = ft;
-	t->next->face = fh;
-	if (fh->halfedge == h->next) fh->halfedge = h;
-	if (ft->halfedge == t->next) ft->halfedge = t;
-
-	// CHange next pointers
 	HalfedgeRef h_next = h->next;
+	HalfedgeRef h_next_next = h_next->next;
 	HalfedgeRef t_next = t->next;
-	HalfedgeRef h_prev = t->next->twin->next->twin;
-	HalfedgeRef t_prev = h->next->twin->next->twin;
+	HalfedgeRef t_next_next = t_next->next;
 
-	h->next = h->next->next;
-	t->next = t->next->next;
-	h_next->next = t;
-	t_next->next = h;
+	HalfedgeRef prev = h;
+	do {
+		prev = prev->next;
+	} while (prev->next->id != h->id);
+	HalfedgeRef h_prev = prev;
+	prev = t;
+	do {
+		prev = prev->next;
+	} while (prev->next->id != t->id);
+	HalfedgeRef t_prev = prev;
+
+	FaceRef fh = h->face;
+	FaceRef ft = t->face;
+
+	VertexRef vh = t->vertex;
+	VertexRef vt = h->vertex;
+	VertexRef next_h_from_vertex = t_next->next->vertex;
+	VertexRef next_t_from_vertex = h_next->next->vertex;
+	
+	h->next = h_next_next;
+	h->vertex = next_h_from_vertex;
+	t->next = t_next_next;
+	t->vertex = next_t_from_vertex;
 
 	h_prev->next = t_next;
+	h_next->next = t;
+	h_next->face = ft;
 	t_prev->next = h_next;
+	t_next->next = h;
+	t_next->face = fh;
+
+	if (vh->halfedge == t)
+		vh->halfedge = h_next;
+	if (vt->halfedge == h)
+		vt->halfedge = t_next;
+
+	if (fh->halfedge == h_next)
+		fh->halfedge = h;
+	if (ft->halfedge == t_next)
+		ft->halfedge = t;
+
 	return e;
 }
 
