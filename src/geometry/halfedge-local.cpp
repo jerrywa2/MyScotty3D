@@ -239,8 +239,6 @@ std::optional<Halfedge_Mesh::VertexRef> Halfedge_Mesh::split_edge(EdgeRef e) {
 	FaceRef f0 = h0->face;
 	FaceRef f1 = h1->face;
 
-	bool bo0 = f0->boundary;
-	bool bo1 = f1->boundary;
 
 	HalfedgeRef h0_prev = h0; while (h0_prev->next != h0) h0_prev = h0_prev->next;
 	HalfedgeRef h1_prev = h1; while (h1_prev->next != h1) h1_prev = h1_prev->next;
@@ -334,7 +332,7 @@ std::optional<Halfedge_Mesh::VertexRef> Halfedge_Mesh::split_edge(EdgeRef e) {
 		cur = b1;             do { cur->face = f1; cur = cur->next; } while (cur != b1);
 	}
 
-	if (bo1) {
+	if (f1->boundary) {
 		a1->twin = a0; a1->next = b1;  a1->vertex = va; a1->edge = ea; a1->face = f1;
 		b1->twin = b0; b1->next = h4;  b1->vertex = m;  b1->edge = eb; b1->face = f1;
 

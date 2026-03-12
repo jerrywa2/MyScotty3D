@@ -393,7 +393,6 @@ bool Halfedge_Mesh::loop_subdivide() {
 		VertexRef v2 = e->halfedge->twin->vertex;
 
 		// Split edge and record new vertex position. Note that split_edge returns an optional
-		bool is_boundary = e->halfedge->face->boundary || e->halfedge->twin->face->boundary;
 		std::optional<VertexRef> maybe_v = split_edge(e);
 		if (maybe_v.has_value()) {
 			VertexRef new_v = maybe_v.value();
