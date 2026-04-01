@@ -36,6 +36,7 @@ PT::Trace Sphere::hit(Ray ray) const {
 	float denom = 2 * dot(d, d);
 	float radicand = 4 * pow(dot(o, d), 2) - 4 * dot(d, d) * (dot(o, o) - pow(radius, 2));
 	float t1, t2, t;
+	t = 0.0f;
 	bool hitPresent = false;
 	if (denom != 0.0f && radicand >= 0.0f)
 	{
