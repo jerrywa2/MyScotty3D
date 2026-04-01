@@ -30,13 +30,30 @@ PT::Trace Sphere::hit(Ray ray) const {
     // but only the _later_ one is within ray.dist_bounds, you should
     // return that one!
 
+	Vec3 o = ray.point;
+	Vec3 d = ray.dir;
+
+	float denom = 2 * dot(d, d);
+	float radicand = 4 * pow(dot(o, d), 2) - 4 * dot(d, d) * (dot(o, o) - pow(radius, 2));
+	float t1, t2, t;
+	bool hitPresent = false;
+	if (denom != 0.0f && radicand >= 0.0f)
+	{
+		t1 = ( -2 * dot(o, d) - sqrt(radicand) ) / denom;
+		t2 = ( -2 * dot(o, d) + sqrt(radicand) ) / denom;
+		hitPresent = (t1 >= ray.dist_bounds.x && t1 <= ray.dist_bounds.y) || (t2 >= ray.dist_bounds.x && t2 <= ray.dist_bounds.y);
+		if (t1 >= ray.dist_bounds.x && t1 <= ray.dist_bounds.y) { t = t1; }
+		else if (t2 >= ray.dist_bounds.x && t2 <= ray.dist_bounds.y) { t = t2; }
+	}
+	Vec3 hitPoint = o + t * d;
+
     PT::Trace ret;
     ret.origin = ray.point;
-    ret.hit = false;       // was there an intersection?
-    ret.distance = 0.0f;   // at what distance did the intersection occur?
-    ret.position = Vec3{}; // where was the intersection?
-    ret.normal = Vec3{};   // what was the surface normal at the intersection?
-	ret.uv = Vec2{}; 	   // what was the uv coordinates at the intersection? (you may find Sphere::uv to be useful)
+    ret.hit = hitPresent;       // was there an intersection?
+    ret.distance = hitPresent ? t : 0.0f;   // at what distance did the intersection occur?
+	ret.position = hitPresent ? hitPoint : Vec3{}; // where was the intersection?
+	ret.normal = hitPresent ? hitPoint.unit() : Vec3{};   // what was the surface normal at the intersection?
+	ret.uv = hitPresent ? uv(hitPoint) : Vec2{}; 	   // what was the uv coordinates at the intersection? (you may find Sphere::uv to be useful)
     return ret;
 }
 

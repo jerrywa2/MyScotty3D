@@ -4,7 +4,7 @@
 		"Camera_transform":{
 			"parent":null,
 			"translation":[0,1,2.9000000953674316],
-			"rotation":[0,0,0,1],
+			"rotation":[0,-8.726617011234339e-07,0,1],
 			"scale":[1,1,1]
 		},
 		"Ceiling_transform":{

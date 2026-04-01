@@ -30,7 +30,7 @@
 			"focal_dist":1,
 			"film.width":1280,
 			"film.height":720,
-			"film.samples":32,
+			"film.samples":128,
 			"film.max_ray_depth":8,
 			"film.sample_pattern":"Center"
 		}
@@ -46,7 +46,7 @@
 		"Texture":{
 			"type":"Image",
 			"sampler":"nearest",
-			"image":"hdr64:cmF3ZgAAAAAAAAAA"
+			"image":"../../../../Downloads/HDR_Tunnel01_preview.png"
 		},
 		"white":{
 			"type":"Constant",

@@ -12,7 +12,9 @@ Vec2 Rect::sample(RNG &rng) const {
     // Return a point selected uniformly at random from the rectangle [0,size.x)x[0,size.y)
     // Useful function: rng.unit()
 
-    return Vec2{};
+	Vec2 randomPoint = Vec2(rng.unit() * size.x, rng.unit() * size.y);
+
+    return randomPoint;
 }
 
 float Rect::pdf(Vec2 at) const {
@@ -109,7 +111,18 @@ Vec3 Sphere::Uniform::sample(RNG &rng) const {
     // Generate a uniformly random point on the unit sphere.
     // Tip: start with Hemisphere::Uniform
 
-    return Vec3{};
+	// Sample full sphere by sampling hemisphere twice (once per hemisphere)
+	float xi1 = rng.unit();
+	float xi2 = rng.unit();
+
+	float theta = std::acos(1.0f - 2.0f * xi1); // maps [0,1] to [0,pi]
+	float phi = 2.0f * PI_F * xi2;
+
+	return Vec3(
+		std::sin(theta) * std::cos(phi),
+		std::cos(theta),
+		std::sin(theta) * std::sin(phi)
+	);
 }
 
 float Sphere::Uniform::pdf(Vec3 dir) const {
@@ -122,33 +135,92 @@ Sphere::Image::Image(const HDR_Image& image) {
     // Set up importance sampling data structures for a spherical environment map image.
     // You may make use of the _pdf, _cdf, and total members, or create your own.
 
-    const auto [_w, _h] = image.dimension();
-    w = _w;
-    h = _h;
+	const auto [_w, _h] = image.dimension();
+	w = _w;
+	h = _h;
+
+	// Build PDF weighted by luminance * sin(theta) for each pixel
+	_pdf.resize(w * h);
+	for (uint32_t y = 0; y < h; y++) {
+		// Pixel center in [0,1], then map to theta in [0, pi]
+		// Note: y=0 is bottom of image, which maps to theta=pi
+		float v = (float(y) + 0.5f) / float(h);
+		float theta = PI_F * (1.0f - v); // flip: y=0 -> theta=pi, y=h -> theta=0
+		float sin_theta = std::sin(theta);
+		for (uint32_t x = 0; x < w; x++) {
+			float luma = image.at(x, y).luma();
+			_pdf[y * w + x] = luma * sin_theta;
+		}
+	}
+
+	// Compute total and normalize PDF
+	float total = 0.0f;
+	for (float v : _pdf) total += v;
+	if (total > 0.0f) {
+		for (float& v : _pdf) v /= total;
+	}
+
+	// Build CDF
+	_cdf.resize(w * h);
+	_cdf[0] = _pdf[0];
+	for (uint32_t i = 1; i < w * h; i++) {
+		_cdf[i] = _cdf[i - 1] + _pdf[i];
+	}
 }
 
 Vec3 Sphere::Image::sample(RNG &rng) const {
-	if(!IMPORTANCE_SAMPLING) {
-		// Step 1: Uniform sampling
-		// Declare a uniform sampler and return its sample
-    	return Vec3{};
-	} else {
-		// Step 2: Importance sampling
-		// Use your importance sampling data structure to generate a sample direction.
-		// Tip: std::upper_bound
-    	return Vec3{};
+	if (!IMPORTANCE_SAMPLING) {
+		Sphere::Uniform uniform;
+		return uniform.sample(rng);
+	}
+	else {
+		// Inversion sampling via binary search on CDF
+		float xi = rng.unit();
+		auto it = std::upper_bound(_cdf.begin(), _cdf.end(), xi);
+		uint32_t idx = uint32_t(std::clamp(
+			int(std::distance(_cdf.begin(), it)),
+			0, int(w * h) - 1
+		));
+
+		uint32_t px = idx % w;
+		uint32_t py = idx / w;
+
+		// Convert pixel to (phi, theta)
+		float phi = (float(px) + 0.5f) / float(w) * 2.0f * PI_F;
+		float v = (float(py) + 0.5f) / float(h);
+		float theta = PI_F * (1.0f - v); // flip y-axis
+
+		return Vec3(
+			std::sin(theta) * std::cos(phi),
+			std::cos(theta),
+			std::sin(theta) * std::sin(phi)
+		);
 	}
 }
 
 float Sphere::Image::pdf(Vec3 dir) const {
-    if(!IMPORTANCE_SAMPLING) {
-		// Step 1: Uniform sampling
-		// Declare a uniform sampler and return its pdf
-    	return 0.f;
-	} else {
-		// A3T7 - image sampler importance sampling pdf
-		// What is the PDF of this distribution at a particular direction?
-    	return 0.f;
+	if (!IMPORTANCE_SAMPLING) {
+		Sphere::Uniform uniform;
+		return uniform.pdf(dir);
+	}
+	else {
+		// Convert direction to (phi, theta)
+		float theta = std::acos(std::clamp(dir.y, -1.0f, 1.0f));
+		float phi = std::atan2(dir.z, dir.x);
+		if (phi < 0.0f) phi += 2.0f * PI_F;
+
+		// Convert to pixel coordinates
+		float v = 1.0f - theta / PI_F; // flip y-axis
+		uint32_t px = uint32_t(std::clamp(phi / (2.0f * PI_F) * float(w), 0.0f, float(w) - 1.0f));
+		uint32_t py = uint32_t(std::clamp(v * float(h), 0.0f, float(h) - 1.0f));
+
+		float p = _pdf[py * w + px];
+
+		// Apply Jacobian: (w*h) / (2*pi^2 * sin(theta))
+		float sin_theta = std::sin(theta);
+		if (sin_theta < 1e-6f) return 0.0f;
+
+		return p * float(w * h) / (2.0f * PI_F * PI_F * sin_theta);
 	}
 }
 

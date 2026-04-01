@@ -15,7 +15,16 @@ BBox Triangle::bbox() const {
     // Beware of flat/zero-volume boxes! You may need to
     // account for that here, or later on in BBox::hit.
 
-    BBox box;
+	BBox box;
+	Vec3 p0 = vertex_list[v0].position;
+	Vec3 p1 = vertex_list[v1].position;
+	Vec3 p2 = vertex_list[v2].position;
+
+	box.enclose(p0);
+	box.enclose(p1);
+	box.enclose(p2);
+	box.min -= Vec3(EPS_F, EPS_F, EPS_F);
+	box.max += Vec3(EPS_F, EPS_F, EPS_F);
     return box;
 }
 
@@ -32,16 +41,31 @@ Trace Triangle::hit(const Ray& ray) const {
 
     // TODO (PathTracer): Task 2
     // Intersect the ray with the triangle defined by the three vertices.
+	Vec3 o = ray.point;
+	Vec3 s = ray.point - v_0.position;
+	Vec3 e1 = v_1.position - v_0.position;
+	Vec3 e2 = v_2.position - v_0.position;
+	Vec3 d = ray.dir;
+
+	float u, v, t;
+	bool hitPresent = false;
+	float denom = dot(cross(e1, d), e2);
+	if (denom != 0.0f)
+	{
+		u = -dot(cross(s, e2), d) / denom;
+		v = dot(cross(e1, d), s) / denom;
+		t = -dot(cross(s, e2), e1) / denom;
+		hitPresent = (u >= 0) && (v >= 0) && (u + v <= 1) && (t >= ray.dist_bounds.x) && (t <= ray.dist_bounds.y);
+	}
 
     Trace ret;
     ret.origin = ray.point;
-    ret.hit = false;       // was there an intersection?
-    ret.distance = 0.0f;   // at what distance did the intersection occur?
-    ret.position = Vec3{}; // where was the intersection?
-    ret.normal = Vec3{};   // what was the surface normal at the intersection?
-                           // (this should be interpolated between the three vertex normals)
-	ret.uv = Vec2{};	   // What was the uv associated with the point of intersection?
-						   // (this should be interpolated between the three vertex uvs)
+    ret.hit = hitPresent;       // was there an intersection?
+    ret.distance = hitPresent ? t : 0.0f;   // at what distance did the intersection occur?
+	ret.position = hitPresent ? o + t * d : Vec3{}; // where was the intersection?
+	ret.normal = hitPresent ? (1 - u - v) * v_0.normal + u * v_1.normal + v * v_2.normal : Vec3{};   // what was the surface normal at the intersection?
+	ret.normal = hitPresent ? ret.normal.unit() : Vec3{};
+	ret.uv = hitPresent ? (1 - u - v) * v_0.uv + u * v_1.uv + v * v_2.uv : Vec2{};	   // What was the uv associated with the point of intersection?
     return ret;
 }
 
