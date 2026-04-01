@@ -46,7 +46,7 @@
 		"Texture":{
 			"type":"Image",
 			"sampler":"nearest",
-			"image":"../../../../Downloads/HDR_Tunnel01_preview.png"
+			"image":"../../../../Downloads/grasslands_sunset_4k.exr"
 		},
 		"white":{
 			"type":"Constant",
@@ -60,8 +60,8 @@
 			"emissive":"white"
 		},
 		"lam_white":{
-			"type":"Lambertian",
-			"albedo":"white"
+			"type":"Mirror",
+			"reflectance":"white"
 		}
 	},
 	"delta_lights":{},
