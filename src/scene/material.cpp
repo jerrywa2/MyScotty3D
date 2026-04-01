@@ -179,7 +179,6 @@ Scatter Refract::scatter(RNG &rng, Vec3 out, Vec2 uv) const {
 	}
 	else {
 		// Compute attenuation using eta ratio for radiance scaling
-		float cos_t = std::abs(out.y);
 		float eta_t, eta_i;
 		if (out.y > 0.0f) {
 			eta_i = ior; eta_t = 1.0f;
