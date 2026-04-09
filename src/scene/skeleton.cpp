@@ -40,18 +40,25 @@ std::vector< Mat4 > Skeleton::bind_pose() const {
 	//A4T2a: bone-to-skeleton transformations in the bind pose
 	//(the bind pose does not rotate by Bone::pose)
 
-	std::vector< Mat4 > bind;
+	std::vector<Mat4> bind;
 	bind.reserve(bones.size());
 
-	//NOTE: bones is guaranteed to be ordered such that parents appear before child bones.
+	// NOTE: bones is guaranteed to be ordered such that parents appear before children.
+	for (auto const& bone : bones) {
+		bool isRoot = (bone.parent == -1U);
 
-	for (auto const &bone : bones) {
-		(void)bone; //avoid complaints about unused bone
-		//placeholder -- your code should actually compute the correct transform:
-		bind.emplace_back(Mat4::I);
+		// A root bone translates from the skeleton base;
+		// a child bone translates from its parent's tip (extent).
+		Vec3 originInParentSpace = isRoot ? base : bones[bone.parent].extent;
+		Mat4 localToParent = Mat4::translate(originInParentSpace);
+
+		// Accumulate the parent's world transform if this isn't the root.
+		Mat4 localToSkeleton = isRoot ? localToParent
+			: bind[bone.parent] * localToParent;
+		bind.emplace_back(localToSkeleton);
 	}
 
-	assert(bind.size() == bones.size()); //should have a transform for every bone.
+	assert(bind.size() == bones.size());
 	return bind;
 }
 
@@ -66,6 +73,35 @@ std::vector< Mat4 > Skeleton::current_pose() const {
 	//Useful functions:
 	//Bone::compute_rotation_axes() will tell you what axes (in local bone space) Bone::pose should rotate around.
 	//Mat4::angle_axis(angle, axis) will produce a matrix that rotates angle (in degrees) around a given axis.
+
+	std::vector<Mat4> pose;
+	pose.reserve(bones.size());
+
+	for (auto const& bone : bones) {
+		bool isRoot = (bone.parent == -1U);
+
+		// Build the local rotation from Bone::pose Euler angles,
+		// applied around the bone's own local axes in Z -> Y -> X order.
+		Vec3 axisX, axisY, axisZ;
+		bone.compute_rotation_axes(&axisX, &axisY, &axisZ);
+		Mat4 localRotation = Mat4::angle_axis(bone.pose.z, axisZ)
+			* Mat4::angle_axis(bone.pose.y, axisY)
+			* Mat4::angle_axis(bone.pose.x, axisX);
+
+		// A root bone originates at the skeleton base plus the animated offset;
+		// a child bone originates at its parent's tip (extent).
+		Vec3 originInParentSpace = isRoot ? (base + base_offset)
+			: bones[bone.parent].extent;
+		Mat4 localToParent = Mat4::translate(originInParentSpace) * localRotation;
+
+		// Accumulate the parent's world transform if this isn't the root.
+		Mat4 localToSkeleton = isRoot ? localToParent
+			: pose[bone.parent] * localToParent;
+		pose.emplace_back(localToSkeleton);
+	}
+
+	assert(pose.size() == bones.size());
+	return pose;
 
 	return std::vector< Mat4 >(bones.size(), Mat4::I);
 
@@ -82,6 +118,41 @@ std::vector< Vec3 > Skeleton::gradient_in_current_pose() const {
 	//TODO: loop over handles and over bones in the chain leading to the handle, accumulating gradient contributions.
 	//remember bone.compute_rotation_axes() -- should be useful here, too!
 
+	auto pose = current_pose();
+	for (auto const& handle : handles) {
+		if (!handle.enabled) continue;
+
+		// Compute the world-space position of this handle's bone tip and the displacement to target.
+		Vec3 tip = (pose[handle.bone] * Vec4(bones[handle.bone].extent, 1.0f)).xyz();
+		Vec3 diff = tip - handle.target;
+
+		// Walk up the ancestor chain, accumulating each bone's contribution to the gradient.
+		BoneIndex idx = handle.bone;
+		while (idx != -1U) {
+			// Get this bone's local rotation axes, then transform them into world space.
+			// Note: x and y are fully transformed by this bone's pose (they live at the bone tip);
+			//       z uses only the parent's transform because it is the twist axis at the bone root.
+			Vec3 x, y, z;
+			bones[idx].compute_rotation_axes(&x, &y, &z);
+			Vec3 worldAxisX = pose[idx].rotate(x);
+			Vec3 worldAxisY = pose[idx].rotate(y);
+			Vec3 worldAxisZ = (bones[idx].parent == -1U) ? Mat4::I.rotate(z)
+				: pose[bones[idx].parent].rotate(z);
+
+			// r is the lever arm: the vector from this joint's origin to the handle tip.
+			Vec3 jointPos = (pose[idx] * Vec4(0.0f, 0.0f, 0.0f, 1.0f)).xyz();
+			Vec3 r = tip - jointPos;
+
+			// Partial derivative of energy w.r.t. each Euler angle:
+			// d(energy)/d(angle) = dot(diff, cross(worldAxis, r))
+			gradient[idx].x += dot(diff, cross(worldAxisX, r));
+			gradient[idx].y += dot(diff, cross(worldAxisY, r));
+			gradient[idx].z += dot(diff, cross(worldAxisZ, r));
+
+			idx = bones[idx].parent;
+		}
+	}
+
 	assert(gradient.size() == bones.size());
 	return gradient;
 }
@@ -96,7 +167,24 @@ bool Skeleton::solve_ik(uint32_t steps) {
 
 	//if at a local minimum (e.g., gradient is near-zero), return 'true'.
 	//if run through all steps, return `false`.
-	return false;
+
+	const float stepSize = 0.1f;
+
+	for (uint32_t step = 0; step < steps; step++) {
+		std::vector<Vec3> gradient = gradient_in_current_pose();
+
+		// Check for convergence: if no bone has a meaningful gradient, we're at a local minimum.
+		bool atLocalMinimum = std::all_of(gradient.begin(), gradient.end(),
+			[](Vec3 const& g) { return g.norm() <= 1e-4f; });
+		if (atLocalMinimum) return true;
+
+		// Descend along the negative gradient for each bone's pose.
+		for (size_t i = 0; i < bones.size(); i++) {
+			bones[i].pose -= stepSize * gradient[i];
+		}
+	}
+
+	return false; // Step budget exhausted without converging.
 }
 
 Vec3 Skeleton::closest_point_on_line_segment(Vec3 const &a, Vec3 const &b, Vec3 const &p) {
