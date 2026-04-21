@@ -33,7 +33,7 @@ bool Particles::Particle::update(const PT::Aggregate &scene, Vec3 const &gravity
 		}
 
 		Vec3 dir = velocity / speed;           // unit direction
-		float max_dist = speed * remaining;    // how far we could travel
+		//float max_dist = speed * remaining;    // how far we could travel
 
 		Ray ray(position, velocity.unit(), Vec2{EPS_F, remaining * velocity.norm() + radius});
 
