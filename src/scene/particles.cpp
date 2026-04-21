@@ -18,7 +18,66 @@ bool Particles::Particle::update(const PT::Aggregate &scene, Vec3 const &gravity
 
 	// (5) Decrease the particle's age and return 'false' if it should be removed.
 
-	return false;
+	float remaining = dt;
+
+	while (remaining > EPS_F) {
+
+		// --- Build the ray for this sub-step ---
+		float speed = velocity.norm();
+
+		// If the particle is essentially stationary, just apply gravity and break
+		if (speed < EPS_F) {
+			position += velocity * remaining;
+			velocity += gravity * remaining;
+			break;
+		}
+
+		Vec3 dir = velocity / speed;           // unit direction
+		float max_dist = speed * remaining;    // how far we could travel
+
+		Ray ray(position, velocity.unit(), Vec2{EPS_F, remaining * velocity.norm() + radius});
+
+		PT::Trace hit = scene.hit(ray);
+
+		if (hit.hit) {
+			// Compute sphere-adjusted collision distance
+			//float sin_angle = std::abs(dot(-dir, hit.normal));
+			//sin_angle = std::max(sin_angle, EPS_F);
+
+			float adjusted_dist = hit.distance - radius;
+
+			//if (adjusted_dist < 0.0f) {
+			//	// Sphere is already intersecting — don't move, just reflect outward
+			//	velocity = velocity - 2.0f * dot(velocity, hit.normal) * hit.normal;
+			//	remaining -= EPS_F;
+			//	continue;
+			//}
+
+			// Time consumed reaching the collision point
+			float time_used = adjusted_dist / speed;
+
+			// Move particle to the collision point
+			position += dir * adjusted_dist;
+
+			velocity = velocity - 2.0f * dot(velocity, hit.normal) * hit.normal;
+			velocity += gravity * time_used;
+			remaining -= time_used;
+
+			// Reflect velocity about the surface normal (elastic collision)
+			
+
+		}
+		else {
+			// No collision — travel the full remaining distance, apply gravity, done
+			position += velocity * remaining;
+			velocity += gravity * remaining;
+			break;
+		}
+	}
+	//printf("pos: %f %f %f, vel: %f %f %f\n", position.x, position.y, position.z, velocity.x, velocity.y, velocity.z);
+	// Decrease age and return whether the particle should live on
+	age -= dt;
+	return age > 0.0f;
 }
 
 void Particles::advance(const PT::Aggregate& scene, const Mat4& to_world, float dt) {

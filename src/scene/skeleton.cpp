@@ -194,6 +194,22 @@ Vec3 Skeleton::closest_point_on_line_segment(Vec3 const &a, Vec3 const &b, Vec3 
 
 	//Efficiency note: you can do this without any sqrt's! (no .unit() or .norm() is needed!)
 
+	Vec3 ab = b - a;
+	Vec3 ap = p - a;
+
+	float ab_dot_ab = dot(ab, ab);
+
+	// Degenerate segment (zero length): just return a
+	if (ab_dot_ab == 0.0f) return a;
+
+	// Project p onto the line, get parameter t
+	float t = dot(ap, ab) / ab_dot_ab;
+
+	// Clamp to [0,1] to stay on the segment
+	t = std::clamp(t, 0.0f, 1.0f);
+
+	return a + t * ab;
+
     return Vec3{};
 }
 
@@ -210,6 +226,44 @@ void Skeleton::assign_bone_weights(Halfedge_Mesh *mesh_) const {
 
 	//you should fill in the helper closest_point_on_line_segment() before working on this function
 
+	// Get bone positions in bind (rest) pose
+	std::vector<Mat4> bind = bind_pose();
+
+	for (auto v = mesh.vertices.begin(); v != mesh.vertices.end(); ++v) {
+		// Clear any old weights
+		v->bone_weights.clear();
+
+		// Compute raw (unnormalized) weight for each bone
+		for (uint32_t j = 0; j < bones.size(); j++) {
+			// Bone start and end in skeleton space
+			Vec3 bone_start = (bind[j] * Vec4(0.0f, 0.0f, 0.0f, 1.0f)).xyz();
+			Vec3 bone_end = (bind[j] * Vec4(bones[j].extent, 1.0f)).xyz();
+
+			// Distance from vertex to closest point on bone
+			Vec3 closest = closest_point_on_line_segment(bone_start, bone_end, v->position);
+			float d = (v->position - closest).norm();
+
+			float r = bones[j].radius;
+			float w_hat = std::max(0.0f, r - d) / r;
+
+			if (w_hat > 0.0f) {
+				v->bone_weights.push_back({ j, w_hat });
+			}
+		}
+
+		// Normalize weights to sum to 1
+		float total = 0.0f;
+		for (auto& bw : v->bone_weights) total += bw.weight;
+
+		if (total > 0.0f) {
+			for (auto& bw : v->bone_weights) bw.weight /= total;
+		}
+		else {
+			// No bone influences this vertex — leave bone_weights empty
+			v->bone_weights.clear();
+		}
+	}
+
 }
 
 Indexed_Mesh Skeleton::skin(Halfedge_Mesh const &mesh, std::vector< Mat4 > const &bind, std::vector< Mat4 > const &current) {
@@ -220,6 +274,11 @@ Indexed_Mesh Skeleton::skin(Halfedge_Mesh const &mesh, std::vector< Mat4 > const
 
 	//one approach you might take is to first compute the skinned positions (at every vertex) and normals (at every corner)
 	// then generate faces in the style of Indexed_Mesh::from_halfedge_mesh
+
+	std::vector<Mat4> M(bind.size());
+	for (uint32_t j = 0; j < bind.size(); j++) {
+		M[j] = current[j] * bind[j].inverse();
+	}
 
 	//---- step 1: figure out skinned positions ---
 
@@ -232,16 +291,41 @@ Indexed_Mesh Skeleton::skin(Halfedge_Mesh const &mesh, std::vector< Mat4 > const
 	//(you will probably want to precompute some bind-to-current transformation matrices here)
 
 	for (auto vi = mesh.vertices.begin(); vi != mesh.vertices.end(); ++vi) {
-		skinned_positions.emplace(vi, vi->position); //PLACEHOLDER! Replace with code that computes the position of the vertex according to vi->position and vi->bone_weights.
-		//NOTE: vertices with empty bone_weights should remain in place.
+		Vec3 new_pos;
+		Mat4 blended = Mat4{ Vec4{0,0,0,0}, Vec4{0,0,0,0},
+							Vec4{0,0,0,0}, Vec4{0,0,0,0} };		//NOTE: vertices with empty bone_weights should remain in place.
 
-		//circulate corners at this vertex:
+		if (vi->bone_weights.empty()) {
+			// No weights: leave vertex in place (identity transform)
+			new_pos = vi->position;
+			skinned_positions.emplace(vi, new_pos);
+
+			auto h = vi->halfedge;
+			do {
+				skinned_normals.emplace(h, h->corner_normal);
+				h = h->twin->next;
+			} while (h != vi->halfedge);
+			continue;
+		}
+
+		// Accumulate blended transform: sum of w_ij * M_j
+		for (auto const& bw : vi->bone_weights) {
+			blended += bw.weight * M[bw.bone];
+		}
+
+		new_pos = (blended * Vec4(vi->position, 1.0f)).xyz();
+		skinned_positions.emplace(vi, new_pos);
+
+		// Normal transform: inverse transpose of blended
+		Mat4 normal_mat = blended.inverse().T();
+
+		// Circulate halfedges (corners) at this vertex
 		auto h = vi->halfedge;
 		do {
-			//NOTE: could skip if h->face->boundary, since such corners don't get emitted
-
-			skinned_normals.emplace(h, h->corner_normal); //PLACEHOLDER! Replace with code that properly transforms the normal vector! Make sure that you normalize correctly.
-
+			Vec3 n = (normal_mat * Vec4(h->corner_normal, 0.0f)).xyz();
+			// Safely normalize
+			if (n.norm() > 1e-6f) n = n.unit();
+			skinned_normals.emplace(h, n);
 			h = h->twin->next;
 		} while (h != vi->halfedge);
 	}
@@ -250,9 +334,41 @@ Indexed_Mesh Skeleton::skin(Halfedge_Mesh const &mesh, std::vector< Mat4 > const
 
 	//Hint: you should be able to use the code from Indexed_Mesh::from_halfedge_mesh (SplitEdges version) pretty much verbatim, you'll just need to fill in the positions and normals.
 
-	Indexed_Mesh result = Indexed_Mesh::from_halfedge_mesh(mesh, Indexed_Mesh::SplitEdges); //PLACEHOLDER! you'll probably want to copy the SplitEdges case from this function o'er here and modify it to use skinned_positions and skinned_normals.
+	Indexed_Mesh result;
+	std::vector<Indexed_Mesh::Vert> verts;
+	std::vector<Indexed_Mesh::Index> idxs;
 
-	return result;
+	for (auto fi = mesh.faces.begin(); fi != mesh.faces.end(); ++fi) {
+		if (fi->boundary) continue;
+
+		// Collect corners of this face
+		std::vector<Halfedge_Mesh::HalfedgeCRef> face_he;
+		auto h = fi->halfedge;
+		do {
+			face_he.push_back(h);
+			h = h->next;
+		} while (h != fi->halfedge);
+
+		// Fan triangulation — emit one vertex per corner
+		uint32_t base = uint32_t(verts.size());
+		for (auto he : face_he) {
+			Indexed_Mesh::Vert vert;
+			vert.pos = skinned_positions.at(he->vertex);
+			vert.norm = skinned_normals.at(he);
+			vert.uv = he->corner_uv;
+			vert.id = he->vertex->id;
+			verts.push_back(vert);
+		}
+
+		// Triangulate the polygon as a fan from base vertex
+		for (uint32_t i = 1; i + 1 < face_he.size(); i++) {
+			idxs.push_back(base);
+			idxs.push_back(base + i);
+			idxs.push_back(base + i + 1);
+		}
+	}
+
+	return Indexed_Mesh(std::move(verts), std::move(idxs));
 }
 
 void Skeleton::for_bones(const std::function<void(Bone&)>& f) {
